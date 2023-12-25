@@ -1,6 +1,6 @@
 build:
   gpu: true
-  cuda: "10.1"
+  cuda: "11.1"
   python_version: "3.8"
   system_packages:
     - "libgl1-mesa-glx"
@@ -22,7 +22,11 @@ build:
     - "lvis==0.5.3"
     - "nltk==3.6.7"
     - "git+https://github.com/openai/CLIP.git"
+    - "Pillow==9.5.0"
+    # - "timm==0.6.13"
   run:
-    - pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu101/torch1.8/index.html
+    - pip uninstall timm -y
+    - pip install timm==0.6.13 
+    - pip install detectron2 -f https://dl.fbaipublicfiles.com/detectron2/wheels/cu111/torch1.8/index.html
 
 predict: "predict.py:Predictor"

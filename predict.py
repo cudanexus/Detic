@@ -3,7 +3,10 @@ import cv2
 import tempfile
 from pathlib import Path
 import cog
+from cog import BasePredictor, Path, Input,BaseModel
+
 import time
+import json
 
 # import some common detectron2 utilities
 from detectron2.engine import DefaultPredictor
@@ -18,13 +21,17 @@ from detic.config import add_detic_config
 from detic.modeling.utils import reset_cls_test
 from detic.modeling.text.text_encoder import build_text_encoder
 
-class Predictor(cog.Predictor):
+class Output(BaseModel):
+    image: Path
+    jsona: Path
+
+class Predictor(BasePredictor):
     def setup(self):
         cfg = get_cfg()
         add_centernet_config(cfg)
         add_detic_config(cfg)
         cfg.merge_from_file("configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml")
-        cfg.MODEL.WEIGHTS = 'Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth'
+        cfg.MODEL.WEIGHTS = 'models/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth'
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
         cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = 'rand'
         cfg.MODEL.ROI_HEADS.ONE_CLASS_PER_PROPOSAL = True
@@ -42,25 +49,27 @@ class Predictor(cog.Predictor):
             'coco': 'coco_2017_val',
         }
 
-    @cog.input(
-        "image",
-        type=Path,
-        help="input image",
-    )
-    @cog.input(
-        "vocabulary",
-        type=str,
-        default='lvis',
-        options=['lvis', 'objects365', 'openimages', 'coco', 'custom'],
-        help="Choose vocabulary",
-    )
-    @cog.input(
-        "custom_vocabulary",
-        type=str,
-        default=None,
-        help="Type your own vocabularies, separated by coma ','",
-    )
-    def predict(self, image, vocabulary, custom_vocabulary):
+    # Input(
+    #     "image",
+    #     type=Path,
+    #     help="input image",
+    # )
+    # Input(
+    #     "vocabulary",
+    #     type=str,
+    #     default='lvis',
+    #     options=['lvis', 'objects365', 'openimages', 'coco', 'custom'],
+    #     help="Choose vocabulary",
+    # )
+    # Input(
+    #     "custom_vocabulary",
+    #     type=str,
+    #     default=None,
+    #     help="Type your own vocabularies, separated by coma ','",
+    # )
+    def predict(self, image: Path = Input(description="input image"),
+                vocabulary:str =Input(description="Choose vocabulary"), 
+                custom_vocabulary:str =Input(description="Choose vocabulary")) -> Output:
         image = cv2.imread(str(image))
         if not vocabulary == 'custom':
             metadata = MetadataCatalog.get(self.BUILDIN_METADATA_PATH[vocabulary])
@@ -82,11 +91,40 @@ class Predictor(cog.Predictor):
                 self.predictor.model.roi_heads.box_predictor[cascade_stages].test_score_thresh = output_score_threshold
 
         outputs = self.predictor(image)
+
+        pred_classes = outputs["instances"].pred_classes.cpu().tolist()
+        class_names = [metadata.thing_classes[x] for x in pred_classes]
+        scores = outputs["instances"].scores.cpu().tolist()
+        pred_boxes = outputs["instances"].pred_boxes.tensor.cpu().tolist()
+
+        # Create a dictionary to store the information
+        output_dict = {
+            "pred_classes": pred_classes,
+            "class_names": class_names,
+            "scores": scores,
+            "pred_boxes": pred_boxes,
+        }
+
+        # Convert the dictionary to JSON
+        json_output = json.dumps(output_dict, indent=2)
+
+        # Specify the file path
+        output_file_path = Path(tempfile.mkdtemp()) / "output.json"
+        
+
+        # Write the JSON data to the file
+        with open(output_file_path, "w") as output_file:
+            output_file.write(json_output)
+
+        print(f"JSON data written to {output_file_path}")
+
+
+
         v = Visualizer(image[:, :, ::-1], metadata)
         out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
         out_path = Path(tempfile.mkdtemp()) / "out.png"
         cv2.imwrite(str(out_path), out.get_image()[:, :, ::-1])
-        return out_path
+        return Output(image=out_path,jsona=output_file_path)
 
 
 def get_clip_embeddings(vocabulary, prompt='a '):
